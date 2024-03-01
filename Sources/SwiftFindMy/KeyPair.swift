@@ -12,9 +12,10 @@ import CryptoKit
 import SwiftECC
 import BigInt
 
+
 /// Protocol for anything that has a public FindMy-key.
 /// Also called an "advertisement" key, since it is the key that is advertised by findable devices.
-protocol HasPublicKey : Hashable {
+public protocol HasPublicKey : Hashable {
     /// The advertisement key bytes
     var advKeyBytes : [UInt8] { get }
 
@@ -29,7 +30,7 @@ protocol HasPublicKey : Hashable {
 }
 
 // Default implementation
-extension HasPublicKey {
+public extension HasPublicKey {
     var hashedAdvKeyBytes : [UInt8] {
         let digest = SHA256.hash(data: Data(advKeyBytes))
         return digest.bytes
@@ -42,7 +43,7 @@ extension HasPublicKey {
         return Data(hashedAdvKeyBytes).base64EncodedString()
     }
 
-    func hash(into hasher: inout Hasher) {
+     func hash(into hasher: inout Hasher) {
         hasher.combine(hashedAdvKeyBytes)
     }
 
@@ -53,8 +54,9 @@ extension HasPublicKey {
 }
 
 /// Private-public keypair for a trackable FindMy accessory.
-class KeyPair : HasPublicKey, CustomStringConvertible {
+public struct KeyPair : HasPublicKey, CustomStringConvertible {
 
+    public
     enum KeyType
     {
         case Unknown
@@ -64,12 +66,14 @@ class KeyPair : HasPublicKey, CustomStringConvertible {
 
     let privKey: ECPrivateKey?
 
+    public
     let keyType : KeyType
-    
+
     /// Description
     /// - Parameters:
     ///   - privateKey: the private key value
     ///   - type: key type (Primary, Secondary)
+    public
     init(privateKey : [UInt8], type: KeyType = .Unknown) {
         let domain = Domain.instance(curve: .EC224r1)
         let privInt = BInt(magnitude: privateKey)
@@ -82,15 +86,18 @@ class KeyPair : HasPublicKey, CustomStringConvertible {
     /// - Parameters:
     ///   - b64: the private key in base64 format
     ///   - type: key type (Primary, Secondary)
-    convenience init(b64 : String, type: KeyType = .Unknown) throws {
+    public
+    init(b64 : String, type: KeyType = .Unknown) throws {
         let key = try Base64.decode(b64)
         self.init(privateKey: key, type: type)
     }
 
+    public
     var isValid : Bool {
         return privKey != nil
     }
 
+    public
     var advKeyBytes: [UInt8] {
         guard let privKey = privKey else { return [] }
 
@@ -98,12 +105,14 @@ class KeyPair : HasPublicKey, CustomStringConvertible {
         return publicKey.w.x.asMagnitudeBytes()
     }
 
+    public
     var privateKeyBytes: [UInt8] {
         guard let privKey = privKey else { return [] }
 
         return privKey.s.asMagnitudeBytes()
     }
 
+    public
     var privateKeyB64: String {
         return Data(privateKeyBytes).base64EncodedString()
     }
@@ -111,6 +120,7 @@ class KeyPair : HasPublicKey, CustomStringConvertible {
     /// Shared secret for a public key
     /// - Parameter pubKey: public key to use
     /// - Returns: the corresponding shared secret
+    public
     func sharedSecret(pubKey: ECPublicKey) throws -> [UInt8]  {
         guard let privKey = privKey else { return [] }
 
@@ -119,16 +129,19 @@ class KeyPair : HasPublicKey, CustomStringConvertible {
     }
 
     // Alias for sharedSecret - that's the name used in the original lib
+    public
     func dhExchange(pubKey: ECPublicKey) throws -> [UInt8]  {
         return try sharedSecret(pubKey: pubKey)
 
     }
 
+    public
     var description : String {
         return "KeyPair(public_key=\"\(self.advKeyB64)\", type=\(self.keyType))"
 
     }
 
+    public
     static func == (lhs: KeyPair, rhs: KeyPair) -> Bool {
         return lhs.advKeyBytes == rhs.advKeyBytes
     }

@@ -9,11 +9,16 @@ import Foundation
 import Digest
 
 /// A findable Find My-accessory using official key rollover.
+public
 struct FindMyAccessory {
 
     let primaryGen : AccessoryKeyGenerator
     let secondary : AccessoryKeyGenerator
+
+    public
     let pairedAt : Date
+
+    public
     let name : String?
     
     /// Description
@@ -23,6 +28,7 @@ struct FindMyAccessory {
     ///   - sks: shared secret for the  secondary key
     ///   - pairedAt: pairing date
     ///   - name:device name
+    public
     init(masterKey: [UInt8], skn: [UInt8], sks: [UInt8], pairedAt: Date, name: String? = nil)
     {
         self.primaryGen = AccessoryKeyGenerator(masterKey: masterKey, initialSK: skn, keyType: .Primary)
@@ -34,6 +40,7 @@ struct FindMyAccessory {
     /// Generate the keys for the given
     /// - Parameter date: date for which the keys are needed - must be > the pairing date
     /// - Returns: the set of keys for this date
+    public
     func keys(at date: Date) -> Set<KeyPair> {
 
         var secondaryOffset = 0

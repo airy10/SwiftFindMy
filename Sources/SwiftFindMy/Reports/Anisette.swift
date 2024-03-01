@@ -31,6 +31,7 @@ func genMetaHeaders(
     ]
 }
 
+public
 protocol BaseAnisetteProvider {
     func baseHeaders() async throws -> [String: String]
 
@@ -44,6 +45,7 @@ protocol BaseAnisetteProvider {
 // Default implementation
 extension BaseAnisetteProvider {
 
+    public
     func headers(userID: String,
                  deviceID: String,
                  serial: String = "0") async throws  -> [String: String] {
@@ -56,21 +58,27 @@ extension BaseAnisetteProvider {
     }
 }
 
-class RemoteAnisetteProvider : BaseAnisetteProvider {
+public
+struct RemoteAnisetteProvider : BaseAnisetteProvider {
 
+    public
     let serverURL : URL
+
+    public
     let httpSession : URLSession
 
+    public
     init(url: URL) {
         self.serverURL = url
         self.httpSession = URLSession(configuration: .default)
     }
 
-    convenience
+    public
     init(server: String) {
         self.init(url: URL(string: server)!)
     }
 
+    public
     func baseHeaders() async throws -> [String : String]  {
 
         var result : [String:String] = [:]
@@ -88,8 +96,10 @@ class RemoteAnisetteProvider : BaseAnisetteProvider {
 
 /// Anisette provider. Generates headers without a remote server
 @available(*, unavailable)
+public
 class LocalAnisetteProvider : BaseAnisetteProvider {
 
+    public
     func baseHeaders() async throws -> [String : String]  {
         fatalError("init(baseHeaders) has not been implemented")
     }

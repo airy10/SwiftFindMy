@@ -12,8 +12,10 @@ import CryptoKit
 import BigInt
 
 /// CryptoKit.Digest utils
+public
 extension Digest {
     var bytes: [UInt8] { Array(makeIterator()) }
+
     var data: Data { Data(bytes) }
 
     var hexStr: String {

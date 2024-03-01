@@ -13,14 +13,16 @@ import Digest
 import BigInt
 import SwiftECC
 
+public
 struct Crypto {
-    
+
     /// Derive a primary or secondary key used by an accessory
     /// 
     /// - Parameters:
     ///   - privKey: Bytes from the private key generated during pairing
     ///   - sk: Bytes from the secret key (primary or secondary) for this time period
     /// - Returns: Bytes from the derived key
+    public
     static func derivePSKey(privKey: [UInt8], sk: [UInt8]) -> [UInt8] {
 
         let P224_N = BInt("ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d", radix: 16)!
