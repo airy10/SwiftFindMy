@@ -10,5 +10,3 @@ Only the KeyPair and Accessory classes are implemented for now
 
 ## Topics
 
-### Classes
-- ``SwiftFindMy/KeyPair``

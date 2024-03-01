@@ -48,4 +48,3 @@ struct Crypto {
         return bytes
     }
 }
-

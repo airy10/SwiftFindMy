@@ -73,7 +73,7 @@ class KeyPair : HasPublicKey, CustomStringConvertible {
     init(privateKey : [UInt8], type: KeyType = .Unknown) {
         let domain = Domain.instance(curve: .EC224r1)
         let privInt = BInt(magnitude: privateKey)
-
+        
         privKey = try? ECPrivateKey(domain: domain, s: privInt)
         keyType = type
     }

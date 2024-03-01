@@ -7,7 +7,6 @@ import XCTest
 import XCTest
 
 import Foundation
-import CryptoKit
 import SwiftECC
 import BigInt
 
