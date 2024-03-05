@@ -13,7 +13,8 @@ let package = Package(
             targets: ["SwiftFindMy"])
     ],
     dependencies: [
-        .package(url: "https://github.com/leif-ibsen/SwiftECC.git", .upToNextMajor(from: "5.3.0")),
+        .package(url: "https://github.com/airy10/SRP.git", branch: "main"),
+        .package(url: "https://github.com/leif-ibsen/SwiftECC", .upToNextMajor(from: "5.3.0")),
         // other dependencies
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.1.0"),
     ],
@@ -22,7 +23,7 @@ let package = Package(
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
             name: "SwiftFindMy",
-            dependencies: ["SwiftECC"]),
+            dependencies: ["SwiftECC", "SRP"]),
 
         .testTarget(
             name: "SwiftFindMyTests",
