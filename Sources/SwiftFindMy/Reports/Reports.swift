@@ -6,6 +6,35 @@
 //
 
 import Foundation
+import SwiftECC
+import CryptoKit
+
+let domain = Domain.instance(curve: .EC224r1)
+
+func decryptPayload(payload: [UInt8], key: KeyPair) throws -> [UInt8] {
+
+    let point = try domain.decodePoint([UInt8](payload[5..<62]))
+    let eph_key = try ECPublicKey(domain: domain, w: point)
+
+    let shared_key = try key.dhExchange(pubKey: eph_key)
+
+
+    let data = shared_key + [0, 0, 0, 1] + payload[5..<62]
+
+    let symmetric_key = SHA256.hash(data: data).bytes
+
+    let decryption_key = symmetric_key[..<16]
+    let iv = symmetric_key[16...]
+    let enc_data = payload[62..<72]
+    let tag = payload[72...]
+
+    let key = SymmetricKey(data: decryption_key)
+
+    let sealedBox = try! AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: iv), ciphertext: enc_data, tag: tag)
+    let payload = try AES.GCM.open(sealedBox, using: key)
+
+    return [UInt8](payload)
+}
 
 /// Location report corresponding to a certain KeyPair
 public struct LocationReport : Comparable {
