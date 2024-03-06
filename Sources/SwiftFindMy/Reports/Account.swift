@@ -8,79 +8,10 @@
 import Foundation
 import Digest
 import SwiftECC
-import CommonCrypto
 import CryptoKit
 import SRP
 import BigNum
-
-
-internal
-func encryptPassword(password: String, salt: [UInt8], iterations: Int) -> [UInt8] {
-
-    let passwordData = SHA256.hash(data: Data(password.utf8)).bytes
-
-    let keySize = kCCKeySizeAES256
-
-    var derivedKey = Array<UInt8>(repeating: 0, count: keySize)
-
-    let res = CCKeyDerivationPBKDF(
-        CCPBKDFAlgorithm(kCCPBKDF2),
-        passwordData, passwordData.count,
-        salt, salt.count,
-        CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-        UInt32(iterations),
-        &derivedKey, derivedKey.count)
-
-    return res == kCCSuccess ? derivedKey: []
-}
-
-private
-func encryptionCbc(sessionKey: [UInt8], data: [UInt8], encrypt : Bool = false) -> [UInt8] {
-    let hmac = HMAC(.SHA2_256, sessionKey)
-
-    let extraDataKeyBytes = hmac.compute([UInt8]("extra data key:".utf8))
-    let extraDataIVBytes = hmac.compute([UInt8]("extra data iv:".utf8))
-
-    // Get only the first 16 bytes of the iv
-    let extraDataIV = [UInt8](extraDataIVBytes[0..<16])
-
-    // Decrypt with AES CBC
-    var result = [UInt8](repeating: 0, count: data.count + kCCBlockSizeAES128)
-    var resultCount = result.count
-
-    let operation = CCOperation(encrypt ? kCCEncrypt : kCCDecrypt)
-    let options = CCOptions(kCCOptionPKCS7Padding)
-
-    let err = CCCrypt(
-        operation,
-        CCAlgorithm(kCCAlgorithmAES),
-        options,
-        extraDataKeyBytes, extraDataKeyBytes.count,
-        extraDataIV,
-        data, data.count,
-        &result, resultCount,
-        &resultCount)
-
-    if err == kCCSuccess {
-        result = [UInt8](result[0..<resultCount])
-    } else {
-        result = []
-    }
-    return result
-}
-
-
-internal
-func decryptCbc(sessionKey: [UInt8], data: [UInt8]) -> [UInt8] {
-    return encryptionCbc(sessionKey: sessionKey, data: data, encrypt: false)
-}
-
-internal
-func encryptCbc(sessionKey: [UInt8], data: [UInt8]) -> [UInt8] {
-    return encryptionCbc(sessionKey: sessionKey, data: data, encrypt: true)
-}
-
-
+import SwiftSoup
 
 /// Base class for an Apple account.
 public
@@ -121,34 +52,20 @@ protocol BaseAppleAccount {
     /// Log in to an Apple account using a username and password.
     func login(username: String, password: String) async throws -> LoginState
 
+
+    /// Get a list of 2FA methods that can be used as a secondary challenge.
+    /// Currently, only SMS-based 2FA methods are supported.
+    func get2FaMethods() async throws -> [any BaseSecondFactorMethod]
+
+    /// Request a 2FA code to be sent to a specific phone number ID.
+    /// Consider using `BaseSecondFactorMethod.request` instead.
+    func sms2FaRequest(phoneNumberID: Int) async throws
+
+    /// Submit a 2FA code that was sent to a specific phone number ID.
+    /// Consider using `BaseSecondFactorMethod.submit` instead.
+    func sms2FaSubmit(phoneNumberID: Int, code: String) async throws -> LoginState
+
     /**
-    @abstractmethod
-    func get_2fa_methods(self) -> MaybeCoro[Sequence[BaseSecondFactorMethod]]:
-        /// 
-        Get a list of 2FA methods that can be used as a secondary challenge.
-
-        Currently, only SMS-based 2FA methods are supported.
-        /// 
-    throw FindMyAccountError.NotImplementedError
-
-    @abstractmethod
-    func sms_2fa_request(self, phone_number_id: int) -> MaybeCoro[nil]:
-        /// 
-        Request a 2FA code to be sent to a specific phone number ID.
-
-        Consider using `BaseSecondFactorMethod.request` instead.
-        /// 
-    throw FindMyAccountError.NotImplementedError
-
-    @abstractmethod
-    func sms_2fa_submit(self, phone_number_id: int, code: String) -> MaybeCoro[LoginState]:
-        /// 
-        Submit a 2FA code that was sent to a specific phone number ID.
-
-        Consider using `BaseSecondFactorMethod.submit` instead.
-        /// 
-    throw FindMyAccountError.NotImplementedError
-
     @abstractmethod
     func td_2fa_request(self) -> MaybeCoro[nil]:
         /// 
@@ -207,6 +124,20 @@ struct AccountInfo : Codable {
 /// An async implementation of `BaseAppleAccount`
 public class AsyncAppleAccount : BaseAppleAccount {
 
+    // auth endpoints
+    let EndpointGSA = "https://gsa.apple.com/grandslam/GsService2"
+    let EndpointLoginMobileMe = "https://setup.icloud.com/setup/iosbuddy/loginDelegates"
+
+    // 2fa auth endpoints
+    let Endpoint2FaMethods = "https://gsa.apple.com/auth"
+    let Endpoint2FaSmsRequest = "https://gsa.apple.com/auth/verify/phone"
+    let Endpoint2FaSmsSubmit = "https://gsa.apple.com/auth/verify/phone/securitycode"
+    let Endpoint2FaTdRequest = "https://gsa.apple.com/auth/verify/trusteddevice"
+    let Endpoint2FaTdSubmit = "https://gsa.apple.com/grandslam/GsService2/validate"
+
+    // reports endpoints
+    let EndpointReportsFetch = "https://gateway.icloud.com/acsnservice/fetch"
+
     public var loginState: LoginState
 
     public var accountName: String? {
@@ -241,7 +172,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
     ///     :param user_id: An optional user ID to use. Will be auto-generated if missing.
     ///     :param device_id: An optional device ID to use. Will be auto-generated if missing.
     public
-    init(anisette: BaseAnisetteProvider, userID: String?, deviceID: String?) {
+    init(anisette: BaseAnisetteProvider, userID: String? = nil, deviceID: String? = nil) {
 
         self.anisette = anisette
         self.uid = userID ?? UUID().uuidString
@@ -313,12 +244,12 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         // LOGGED_OUT -> (REQUIRE_2FA or AUTHENTICATED)
         let newState = try await self.GSAAuthenticate(username: username, password: password)
-        if newState == LoginState.Require2FA {
+        if newState == .Require2FA {
             // pass control back to handle 2FA
             return newState
         }
         // AUTHENTICATED -> LOGGED_IN
-        return try await loginMobileme()
+        return try await loginMobileMe()
     }
 
 
@@ -334,7 +265,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         let headers = try await anisetteHeaders()
 
-        let url = URL(string: "https://gateway.icloud.com/acsnservice/fetch")!
+        let url = URL(string: EndpointReportsFetch)!
         var request = URLRequest(url: url)
         request.allHTTPHeaderFields = headers
         request.httpMethod = "POST"
@@ -414,13 +345,16 @@ public class AsyncAppleAccount : BaseAppleAccount {
             throw FindMyAccountError.ValueError(message: msg)
         }
 
+        let username = self.userName!
+        let password = self.password!
+
         let configuration = SRPConfiguration<SHA256>(.N2048, shouldPadG: true)
         let client = SRPClient(configuration: configuration)
         let clientKeys = client.generateKeys()
         let clientPublicKey = clientKeys.public
         let a2k = clientPublicKey
         var r = try await gsaRequest(
-            params: ["A2k": Data(a2k.bytes), "u": userName!, "ps": ["s2k", "s2k_fo"], "o": "init"]
+            params: ["A2k": Data(a2k.bytes), "u": username, "ps": ["s2k", "s2k_fo"], "o": "init"]
         )
 
         var status = r["Status"] as! [String:Any]
@@ -437,18 +371,17 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         let salt = [UInt8](r["s"] as! Data)
         let iterations =  r["i"] as! Int
-        let pass = encryptPassword(password: password!, salt: salt, iterations: iterations)
+        let pass = Crypto.encryptPassword(password: password, salt: salt, iterations: iterations)
 
         let b =  [UInt8](r["B"] as! Data)
 
         let message =  ":".utf8 + pass // Python impl has srp.no_username_in_x
 
-        // Very probably wrong - as next step is failing....
         let s = try client.calculateSharedSecret(message: message, salt: salt, clientKeys: clientKeys, serverPublicKey: SRPKey(b))
-        let m1 = client.calculateClientProof(username: username!, salt: salt, clientPublicKey: clientKeys.public, serverPublicKey: SRPKey(b), sharedSecret: SRPKey(s.bytes))
+        let m1 = client.calculateClientProof(username: username, salt: salt, clientPublicKey: clientKeys.public, serverPublicKey: SRPKey(b), sharedSecret: SRPKey(s.bytes))
 
         r = try await gsaRequest(
-            params:   ["c": r["c"]!, "M1": Data(m1), "u": userName!, "o": "complete"]
+            params:   ["c": r["c"]!, "M1": Data(m1), "u": username, "o": "complete"]
         )
 
         status = r["Status"] as! [String:Any]
@@ -469,7 +402,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
         }
 
         let encodedSpd =  [UInt8](r["spd"] as! Data)
-        let decodedSpd = Data(decryptCbc(sessionKey: s.bytes, data: encodedSpd))
+        let decodedSpd = Data(Crypto.decryptSpdAesCbc(sessionKey: s.bytes, data: encodedSpd))
         let spd : [ String : Any ] = try PropertyListSerialization.propertyList(from: decodedSpd, options: [], format: nil) as! [String : Any]
 
         self.accountInfo = AccountInfo(
@@ -481,7 +414,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
         status = r["Status"] as! [String:Any]
         if let au = status["au"] as? String {
             if au == "secondaryAuth" || au == "trustedDeviceSecondaryAuth" {
-                self.accountInfo! .trustedDevice2fa =  au == "trustedDeviceSecondaryAuth"
+                self.accountInfo!.trustedDevice2fa =  au == "trustedDeviceSecondaryAuth"
 
                 return setLoginState(
                     state: .Require2FA,
@@ -497,7 +430,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         }
 
-        let t = spd["t"] as? [String: Any] ?? [:]
+        let t = spd["t", default: [:]] as? [String: Any] ?? [:]
         let pet = t["com.apple.gs.idms.pet"] as? [String: Any] ?? [:]
         let idms_pet = pet["token"] as? String ?? ""
 
@@ -510,12 +443,12 @@ public class AsyncAppleAccount : BaseAppleAccount {
         )
     }
 
-    private func loginMobileme() async throws -> LoginState {
+    private func loginMobileMe() async throws -> LoginState {
 
         let dict : [String : Any] = [
-            "apple-id": userName!,
+            "apple-id": userName ?? "",
             "delegates": [
-                "com.apple.mobileme": Array<String>()
+                "com.apple.mobileme": [String]()
             ],
             "password":  loginStateData["idms_pet"] as? String ?? "",
             "client-id": uid
@@ -531,7 +464,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
         let anisetteHeaders = try await anisetteHeaders()
         headers.merge(anisetteHeaders) { $1 }
 
-        let url = URL(string: "https://setup.icloud.com/setup/iosbuddy/loginDelegates")!
+        let url = URL(string: EndpointLoginMobileMe)!
         var request = URLRequest(url: url)
         request.allHTTPHeaderFields = headers
         request.httpMethod = "POST"
@@ -542,10 +475,22 @@ public class AsyncAppleAccount : BaseAppleAccount {
         let base64LoginString = Base64.encode(auth, 10000)
         request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
 
-        let (responseData, _) = try await http.upload(
+        let (responseData, response) = try await http.upload(
             for: request,
             from: xmldata
         )
+
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode != 200  {
+                let msg = "Error response for com.apple.mobileme login request: \(httpResponse.statusCode)"
+                throw FindMyAccountError.unhandledProtocolError(message: msg)
+            }
+        }
+
+        if responseData.count == 0  {
+            let msg = "Error response for com.apple.mobileme login request: no data"
+            throw FindMyAccountError.unhandledProtocolError(message: msg)
+        }
 
         let data : [ String : Any ] = try PropertyListSerialization.propertyList(from: responseData, options: [], format: nil) as! [String : Any]
 
@@ -602,7 +547,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
             "X-MMe-Client-Info": "<MacBookPro18,3> <Mac OS X;13.4.1;22F8> <com.apple.AOSKit/282 (com.apple.dt.Xcode/3594.4.19)>"
         ]
 
-        let url = URL(string: "https://gsa.apple.com/grandslam/GsService2")!
+        let url = URL(string: EndpointGSA)!
         var request = URLRequest(url: url)
         request.allHTTPHeaderFields = headers
         request.httpMethod = "POST"
@@ -626,111 +571,188 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         return data["Response"] as? [String:Any] ?? [:]
     }
-/*
-    @require_login_state(LoginState.REQUIRE_2FA)
-    @override
-    async def get_2fa_methods(self) -> Sequence[AsyncSecondFactorMethod]:
-        """See `BaseAppleAccount.get_2fa_methods`."""
-        methods: list[AsyncSecondFactorMethod] = []
 
-        if self._account_info is None:
-            return []
+    public func get2FaMethods() async throws -> [any BaseSecondFactorMethod] {
 
-        if self._account_info["trusted_device_2fa"]:
-            methods.append(AsyncTrustedDeviceSecondFactor(self))
+        guard let accountInfo  = self.accountInfo else { return [] }
 
-        # sms
-        auth_page = await self._sms_2fa_request("GET", "https://gsa.apple.com/auth")
-        try:
-            phone_numbers = _extract_phone_numbers(auth_page)
-            methods.extend(
-                AsyncSmsSecondFactor(
-                    self,
-                    number.get("id") or -1,
-                    number.get("numberWithDialCode") or "-",
+        var methods : [any BaseSecondFactorMethod] = []
+
+        if accountInfo.trustedDevice2fa {
+            methods.append(AsyncTrustedDeviceSecondFactorMethod(account: self))
+        }
+
+        let authPage = try await send2FaRequest(method: "GET", url: Endpoint2FaMethods)
+
+        // sms
+        do {
+            let phoneNumbers = try extractPhoneNumbers(numbers: authPage)
+            for number in phoneNumbers {
+                methods.append(
+                    AsyncSmsSecondFactor(
+                        account: self,
+                        phoneNumberID : number["id"] as? Int ?? -1,
+                        phoneNumber: number["numberWithDialCode"] as? String ?? "-"
+                    )
                 )
-                for number in phone_numbers
-            )
-        except RuntimeError:
-            logging.warning("Unable to extract phone numbers from login page")
+
+            }
+         }
+         catch {
+             //Logger().warning("Unable to extract phone numbers from login page")
+         }
 
         return methods
+    }
 
-    @require_login_state(LoginState.REQUIRE_2FA)
-    @override
-    async def sms_2fa_request(self, phone_number_id: int) -> None:
-        """See `BaseAppleAccount.sms_2fa_request`."""
-        data = {"phoneNumber": {"id": phone_number_id}, "mode": "sms"}
+    public func sms2FaRequest(phoneNumberID: Int) async throws {
+        let data : [String : Any] = ["phoneNumber": ["id": phoneNumberID], "mode": "sms"]
 
-        await self._sms_2fa_request(
-            "PUT",
-            "https://gsa.apple.com/auth/verify/phone",
-            data,
+        let _ = try await self.send2FaRequest(
+            method: "PUT",
+            url: Endpoint2FaSmsRequest,
+            data: data
         )
+    }
 
-    @require_login_state(LoginState.REQUIRE_2FA)
-    @override
-    async def sms_2fa_submit(self, phone_number_id: int, code: String) -> LoginState:
-        """See `BaseAppleAccount.sms_2fa_submit`."""
-        data = {
-            "phoneNumber": {"id": phone_number_id},
-            "securityCode": {"code": String(code)},
+    public func sms2FaSubmit(phoneNumberID: Int, code: String) async throws -> LoginState {
+
+        let data : [String : Any] = [
+            "phoneNumber": ["id": phoneNumberID],
+            "securityCode": ["code": code],
             "mode": "sms",
-        }
+        ]
 
-        await self._sms_2fa_request(
-            "POST",
-            "https://gsa.apple.com/auth/verify/phone/securitycode",
-            data,
+        _ = try await self.send2FaRequest(
+            method: "POST",
+            url: Endpoint2FaSmsSubmit,
+            data: data
         )
 
-        # REQUIRE_2FA -> AUTHENTICATED
-        new_state = await self._gsa_authenticate()
-        if new_state != LoginState.AUTHENTICATED:
-            msg = f"Unexpected state after submitting 2FA: {new_state}"
-            raise UnhandledProtocolError(msg)
+        /// REQUIRE_2FA -> AUTHENTICATED
+        let newState = try await self.GSAAuthenticate()
+        if newState != .Authentificated {
+            let msg = "Unexpected state after submitting 2FA: \(newState)"
+            throw FindMyAccountError.unhandledProtocolError(message: msg)
+        }
+        // AUTHENTICATED -> LOGGED_IN
+        return try await self.loginMobileMe()
+    }
 
-        # AUTHENTICATED -> LOGGED_IN
-        return await self._login_mobileme()
-
-    @require_login_state(LoginState.REQUIRE_2FA)
-    @override
-    async def td_2fa_request(self) -> None:
-        """See `BaseAppleAccount.td_2fa_request`."""
-        headers = {
+    /// See `BaseAppleAccount.td_2fa_request`."""
+    func trustedDevice2FaRequest() async throws {
+        let headers = [
             "Content-Type": "text/x-xml-plist",
-            "Accept": "text/x-xml-plist",
-        }
-        await self._sms_2fa_request(
-            "GET",
-            "https://gsa.apple.com/auth/verify/trusteddevice",
-            headers=headers,
+            "Accept": "text/x-xml-plist"
+        ]
+        _ = try await send2FaRequest(
+            method: "GET",
+            url: Endpoint2FaTdRequest,
+            headers : headers
         )
+    }
 
-    @require_login_state(LoginState.REQUIRE_2FA)
-    @override
-    async def td_2fa_submit(self, code: String) -> LoginState:
-        """See `BaseAppleAccount.td_2fa_submit`."""
-        headers = {
+    /// See `BaseAppleAccount.trustedDevice2FaSubmit
+    func trustedDevice2FaSubmit(code: String) async throws -> LoginState {
+
+        let headers = [
             "security-code": code,
             "Content-Type": "text/x-xml-plist",
-            "Accept": "text/x-xml-plist",
-        }
-        await self._sms_2fa_request(
-            "GET",
-            "https://gsa.apple.com/grandslam/GsService2/validate",
-            headers=headers,
+            "Accept": "text/x-xml-plist"
+        ]
+
+        _ = try await send2FaRequest(
+            method: "GET",
+            url: Endpoint2FaTdSubmit,
+            headers : headers
         )
 
-        # REQUIRE_2FA -> AUTHENTICATED
-        new_state = await self._gsa_authenticate()
-        if new_state != LoginState.AUTHENTICATED:
-            msg = f"Unexpected state after submitting 2FA: {new_state}"
-            raise UnhandledProtocolError(msg)
 
-        # AUTHENTICATED -> LOGGED_IN
-        return await self._login_mobileme()
-*/
+        /// REQUIRE_2FA -> AUTHENTICATED
+        let newState = try await self.GSAAuthenticate()
+        if newState != .Authentificated {
+            let msg = "Unexpected state after submitting 2FA: \(newState)"
+            throw FindMyAccountError.unhandledProtocolError(message: msg)
+        }
+        // AUTHENTICATED -> LOGGED_IN
+        return try await self.loginMobileMe()
+    }
+
+    private func extractPhoneNumbers(numbers: String) throws -> [[String: Any]]
+    {
+        let soup: Document = try SwiftSoup.parse(numbers)
+        let scripts = try soup.getElementsByTag("script")
+        let data = scripts.compactMap {
+            try? $0.getElementsByClass("boot_args").first()?.getChildNodes().first?.getAttributes()?.get(key: "data")
+        }.first ?? nil
+
+        guard data != nil else { return [] }
+
+        let stringData = Data([UInt8](data!.utf8))
+
+        let json = try JSONSerialization.jsonObject(with: stringData, options: []) as! [String: Any]
+        let direct = json["direct"] as? [String: Any] ?? [:]
+        let phoneNumberVerification = direct["phoneNumberVerification"] as? [String: Any] ?? [:]
+        let trustedPhoneNumbers = phoneNumberVerification["trustedPhoneNumbers"] as? [[String: Any]] ?? []
+
+        return trustedPhoneNumbers
+    }
+
+
+    private func send2FaRequest(
+        method: String,
+        url: String,
+        data: [String : Any]? = nil,
+        headers: [String : String]? = nil
+    ) async throws -> String {
+
+        let adsid = loginStateData["adsid"] as? String
+        let idmsToken = loginStateData["idms_token"] as? String
+
+        guard (adsid != nil && idmsToken != nil) else { return "" }
+
+        let idtoken = adsid! + ":" + idmsToken!
+
+        let identityToken = Base64.encode([UInt8](idtoken.utf8), 10000)
+
+        var headers = headers ?? [:]
+
+        headers.merge(
+            [
+                "User-Agent": "Xcode",
+                "Accept-Language": "en-us",
+                "X-Apple-Identity-Token": identityToken,
+                "X-Apple-App-Info": "com.apple.gs.xcode.auth",
+                "X-Xcode-Version": "11.2 (11B41)",
+                "X-Mme-Client-Info": "<MacBookPro18,3> <Mac OS X;13.4.1;22F8> <com.apple.AOSKit/282 (com.apple.dt.Xcode/3594.4.19)>",
+            ]
+        ) { $1 }
+        headers.merge(try await self.anisetteHeaders()) { $1 }
+
+        let url = URL(string: url)!
+        var request = URLRequest(url: url)
+        request.allHTTPHeaderFields = headers
+        request.httpMethod = method
+
+        if let data = data {
+            let json = try JSONSerialization.data(withJSONObject: data, options: [])
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = json
+        }
+
+        let (responseData, response) = try await http.data(
+            for: request
+        )
+
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode != 200  {
+                let msg = "2FA request failed: \(httpResponse.statusCode)"
+                throw FindMyAccountError.unhandledProtocolError(message: msg)
+            }
+        }
+
+        return String(decoding: responseData, as: UTF8.self)
+    }
 
  }
 

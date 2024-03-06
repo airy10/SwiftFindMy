@@ -12,6 +12,8 @@ import Foundation
 import Digest
 import BigInt
 import SwiftECC
+import CryptoKit
+import CommonCrypto
 
 public
 struct Crypto {
@@ -49,4 +51,77 @@ struct Crypto {
 
         return bytes
     }
+
+
+    // Encrypt password using PBKDF2-HMAC
+    static
+    public func encryptPassword(password: String, salt: [UInt8], iterations: Int) -> [UInt8] {
+
+        let passwordData = SHA256.hash(data: Data(password.utf8)).bytes
+
+        let keySize = kCCKeySizeAES256
+
+        var derivedKey = Array<UInt8>(repeating: 0, count: keySize)
+
+        let res = CCKeyDerivationPBKDF(
+            CCPBKDFAlgorithm(kCCPBKDF2),
+            passwordData, passwordData.count,
+            salt, salt.count,
+            CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+            UInt32(iterations),
+            &derivedKey, derivedKey.count)
+
+        return res == kCCSuccess ? derivedKey: []
+    }
+
+    private
+    static
+    func encryptionSpdAesCbc(sessionKey: [UInt8], data: [UInt8], encrypt : Bool = false) -> [UInt8] {
+        let hmac = HMAC(.SHA2_256, sessionKey)
+
+        let extraDataKeyBytes = hmac.compute([UInt8]("extra data key:".utf8))
+        let extraDataIVBytes = hmac.compute([UInt8]("extra data iv:".utf8))
+
+        // Get only the first 16 bytes of the iv
+        let extraDataIV = [UInt8](extraDataIVBytes[0..<16])
+
+        // Decrypt with AES CBC
+        var result = [UInt8](repeating: 0, count: data.count + kCCBlockSizeAES128)
+        var resultCount = result.count
+
+        let operation = CCOperation(encrypt ? kCCEncrypt : kCCDecrypt)
+        let options = CCOptions(kCCOptionPKCS7Padding)
+
+        let err = CCCrypt(
+            operation,
+            CCAlgorithm(kCCAlgorithmAES),
+            options,
+            extraDataKeyBytes, extraDataKeyBytes.count,
+            extraDataIV,
+            data, data.count,
+            &result, resultCount,
+            &resultCount)
+
+        if err == kCCSuccess {
+            result = [UInt8](result[0..<resultCount])
+        } else {
+            result = []
+        }
+        return result
+    }
+
+
+    /// Decrypt SPD data using SRP session key
+    static
+    public func decryptSpdAesCbc(sessionKey: [UInt8], data: [UInt8]) -> [UInt8] {
+        return encryptionSpdAesCbc(sessionKey: sessionKey, data: data, encrypt: false)
+    }
+
+    /// Encrypt SPD data using SRP session key."""
+    static
+    public func encryptSpdAesCbc(sessionKey: [UInt8], data: [UInt8]) -> [UInt8] {
+        return encryptionSpdAesCbc(sessionKey: sessionKey, data: data, encrypt: true)
+    }
+
+
 }

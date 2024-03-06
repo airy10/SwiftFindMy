@@ -19,28 +19,6 @@ extension Digest {
     var data: Data { Data(bytes) }
 }
 
-/// Add some padding parameter to the hash functions
-extension HashFunction {
-
-    @inlinable public static func hash<D>(data: D, width: Int) -> Self.Digest where D : DataProtocol
-    {
-        if data.count < width {
-            let padding = Array(repeating: D.Element(0), count: width - data.count)
-            return hash(data: padding + data)
-        }
-        return hash(data: data)
-    }
-
-    @inlinable public mutating func update<D>(data: D, width: Int) where D : DataProtocol
-    {
-        if data.count < width {
-            let padding = Array(repeating: D.Element(0), count: width - data.count)
-            return update(data: padding + data)
-        }
-        return update(data: data)
-    }
-}
-
 /// Encode a Encodable into a Dictionary
 public
 class DictionaryEncoder {

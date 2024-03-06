@@ -83,7 +83,7 @@ struct RemoteAnisetteProvider : BaseAnisetteProvider {
 
         var result : [String:String] = [:]
 
-        let (data, _) = try! await URLSession.shared.data(from: serverURL)
+        let (data, _) = try! await httpSession.data(from: serverURL)
         let res = try JSONSerialization.jsonObject(with: data, options: []) as! [String: String]
 
         result["X-Apple-I-MD"] = res["X-Apple-I-MD"]
