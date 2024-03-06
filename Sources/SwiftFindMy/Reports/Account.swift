@@ -86,6 +86,9 @@ protocol BaseAppleAccount {
 
      */
 
+
+    func fetchRawReports(start: Int, end: Int, ids: [String]) async throws -> [String : Any]
+
     /// Fetch location reports for a sequence of `KeyPair`s between `date_from` and `date_end`.
     ///
     /// Returns a dictionary mapping `KeyPair`s to a list of their location reports.
@@ -93,7 +96,7 @@ protocol BaseAppleAccount {
         keys: any Sequence<KeyPair>,
         dateFrom: Date,
         dateTo: Date?
-    ) async ->  [KeyPair: [LocationReport]]
+    ) async throws ->  [KeyPair: [LocationReport]]
 
     /// Fetch location reports for a sequence of `KeyPair`s for the last `hours` hours.
     ///
@@ -101,7 +104,7 @@ protocol BaseAppleAccount {
     func fetchLastReports(
         keys: any Sequence<KeyPair>,
         hours: Int
-    ) async ->  [KeyPair: [LocationReport]]
+    ) async throws ->  [KeyPair: [LocationReport]]
 
     /// Retrieve a complete dictionary of Anisette headers.
     ///
@@ -159,7 +162,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
     private var userName : String?
     private var password : String?
 
-    private let reports : LocationReportsFetcher?
+    private lazy var reports : LocationReportsFetcher? = LocationReportsFetcher(account: self)
 
     private var accountInfo : AccountInfo?
     private var loginStateData : Dictionary<String, Any>
@@ -186,7 +189,6 @@ public class AsyncAppleAccount : BaseAppleAccount {
         self.accountInfo = nil
 
         self.http = URLSession(configuration: .default)
-        self.reports = nil
     }
 
     public func export() -> [String : Any] {
@@ -293,24 +295,24 @@ public class AsyncAppleAccount : BaseAppleAccount {
         return resp
     }
 
-    public func fetchReports(keys: any Sequence<KeyPair>, dateFrom: Date, dateTo: Date?) async -> [KeyPair : [LocationReport]] {
+    public func fetchReports(keys: any Sequence<KeyPair>, dateFrom: Date, dateTo: Date?) async throws -> [KeyPair : [LocationReport]] {
 
         let dateTo = dateTo ?? Date()
 
-        return await reports?.fetchReports(
-            dataFrom: dateFrom,
+        return try  await reports?.fetchReports(
+            dateFrom: dateFrom,
             dateTo: dateTo,
             devices: keys
         ) ?? [:]
     }
 
     /// See `BaseAppleAccount.fetch_last_reports
-    public func fetchLastReports(keys: any Sequence<KeyPair>, hours: Int = 7 * 24) async -> [KeyPair : [LocationReport]] {
+    public func fetchLastReports(keys: any Sequence<KeyPair>, hours: Int = 7 * 24) async throws -> [KeyPair : [LocationReport]] {
 
         let end = Date()
         let start = end.addingTimeInterval(-Double(hours) * 3600.0)
 
-        return await fetchReports(keys: keys, dateFrom: start,  dateTo: end)
+        return try await fetchReports(keys: keys, dateFrom: start,  dateTo: end)
     }
 
     /// See `BaseAppleAccount.get_anisette_headers`
