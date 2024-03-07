@@ -237,7 +237,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         }
         catch  {
-            throw FindMyAccountError.invalidAccountDataError()
+            throw FindMyAccountError.invalidAccountDataError(message: "invalid Account Data")
         }
     }
 
@@ -309,8 +309,9 @@ public class AsyncAppleAccount : BaseAppleAccount {
     /// See `BaseAppleAccount.fetch_last_reports
     public func fetchLastReports(keys: any Sequence<KeyPair>, hours: Int = 7 * 24) async throws -> [KeyPair : [LocationReport]] {
 
-        let end = Date()
-        let start = end.addingTimeInterval(-Double(hours) * 3600.0)
+        let now = Date.now
+        let end = now
+        let start = now - Double(hours) * 3600.0
 
         return try await fetchReports(keys: keys, dateFrom: start,  dateTo: end)
     }

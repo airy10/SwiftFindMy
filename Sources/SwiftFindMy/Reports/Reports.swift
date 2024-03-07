@@ -36,15 +36,15 @@ func decryptPayload(payload: [UInt8], key: KeyPair) throws -> [UInt8] {
 }
 
 /// Location report corresponding to a certain KeyPair
-public struct LocationReport : Comparable {
+public struct LocationReport : Comparable, Hashable {
 
     public static func < (lhs: LocationReport, rhs: LocationReport) -> Bool {
-        lhs.timestamp < rhs.timestamp
+        lhs.timestamp < rhs.timestamp || (lhs.timestamp == rhs.timestamp && lhs.key.hashedAdvKeyB64 < rhs.key.hashedAdvKeyB64)
     }
     
     public static func == (lhs: Self, rhs: Self) -> Bool
     {
-        lhs.timestamp == rhs.timestamp
+        lhs.timestamp == rhs.timestamp && lhs.key.hashedAdvKeyB64 == rhs.key.hashedAdvKeyB64
     }
 
    /// The `KeyPair` corresponding to this location report.
@@ -130,26 +130,34 @@ public struct LocationReportsFetcher {
     }
 
 
+    /// Fetch location reports for a certain keyPari.
+    /// Reports are sorted by timestamp
     public func fetchReports(dateFrom: Date, dateTo: Date, device: KeyPair) async throws -> [LocationReport] {
 
         return try await baseFetchReports(dateFrom: dateFrom, dateTo: dateTo, devices: [device])
     }
 
+    /// Fetch location reports for a list of keyPari
+    /// Reports are sorted by timestamp
     public func fetchReports(dateFrom: Date, dateTo: Date, devices: any Sequence<KeyPair>) async throws -> [KeyPair : [LocationReport]] {
 
         let reports = try await baseFetchReports(dateFrom: dateFrom, dateTo: dateTo, devices:devices)
 
-        var res : [KeyPair : [LocationReport]] = Dictionary(uniqueKeysWithValues: devices.map { ($0, []) })
+        var res : [KeyPair : [LocationReport]] = Dictionary(reports.map { ($0.key, []) }) {
+            (first, _) in
+            first
+        }
 
         for report in reports {
             res[report.key]?.append(report)
         }
+
         return res
     }
 
     public func baseFetchReports(dateFrom: Date, dateTo: Date, devices: any Sequence<KeyPair>) async throws -> [LocationReport] {
 
-        var reports: [LocationReport] = []
+        var reports: Set<LocationReport> = []
 
         let startDate = Int(dateFrom.timeIntervalSince1970 * 1000.0)
         let endDate = Int(dateTo.timeIntervalSince1970 * 1000.0)
@@ -166,8 +174,8 @@ public struct LocationReportsFetcher {
             let payload64 = report["payload"] as! String
             let payload = try Base64.decode(payload64)
 
-            reports.append(try LocationReport.fromPayload(key: key, publishDate: datePublished, description: description, payload: payload))
+            reports.insert(try LocationReport.fromPayload(key: key, publishDate: datePublished, description: description, payload: payload))
         }
-        return reports
+        return Array(reports).sorted()
     }
 }

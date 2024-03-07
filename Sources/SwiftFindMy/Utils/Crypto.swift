@@ -18,6 +18,9 @@ import CommonCrypto
 public
 struct Crypto {
 
+    static private let P224_N = BInt("ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d", radix: 16)!
+    static private let sharedInfo = [UInt8]("diversify".utf8)
+
     /// Derive a primary or secondary key used by an accessory
     /// 
     /// - Parameters:
@@ -27,12 +30,8 @@ struct Crypto {
     public
     static func derivePSKey(privKey: [UInt8], sk: [UInt8]) -> [UInt8] {
 
-        let P224_N = BInt("ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d", radix: 16)!
-
-        let sharedInfo = "diversify".utf8
-
         let privInt = BInt(magnitude: privKey)
-        let at = KDF.X963KDF(.SHA2_256, sk, 72, [UInt8](sharedInfo))
+        let at = KDF.X963KDF(.SHA2_256, sk, 72, sharedInfo)
 
         let start = Array(at[0..<36])
         let end = Array(at.suffix(from: 36))

@@ -15,6 +15,8 @@ struct FindMyAccessory {
     let primaryGen : AccessoryKeyGenerator
     let secondary : AccessoryKeyGenerator
 
+    let secondaryOffset : Int
+
     public
     let pairedAt : Date
 
@@ -35,6 +37,18 @@ struct FindMyAccessory {
         self.secondary = AccessoryKeyGenerator(masterKey: masterKey, initialSK: sks, keyType: .Secondary)
         self.pairedAt = pairedAt
         self.name = name
+
+        let calendar = Calendar(identifier: .gregorian)
+
+        // number of slots until first 4 am
+        var firstRollover =  calendar.date(bySettingHour: 4, minute: 0, second: 0, of: pairedAt)!
+
+        if firstRollover < pairedAt {
+            // we rolled backwards, so increment the day
+            firstRollover += 24.0 * 3600.0
+        }
+        self.secondaryOffset = Int(firstRollover.timeIntervalSince(pairedAt) / (15 * 60)) + 1
+
     }
     
     /// Generate the keys for the given
@@ -43,18 +57,7 @@ struct FindMyAccessory {
     public
     func keys(at date: Date) -> Set<KeyPair> {
 
-        var secondaryOffset = 0
-
         let idx = Int(date.timeIntervalSince(pairedAt) / (15 * 60)) + 1
-
-        // number of slots until first 4 am
-        var firstRollover =  Calendar(identifier: .gregorian).date(bySettingHour: 4, minute: 0, second: 0, of: pairedAt)!
-
-        if firstRollover < pairedAt {
-            // we rolled backwards, so increment the day
-            firstRollover.addTimeInterval(24.0 * 3600.0)
-        }
-        secondaryOffset = Int(firstRollover.timeIntervalSince(pairedAt) / (15 * 60)) + 1
 
         return keys(index: idx, secondaryOffset: secondaryOffset)
 
@@ -101,6 +104,9 @@ class AccessoryKeyGenerator: Collection {
     private
     var curSKIndex : Int
 
+    private
+    let sharedInfo = [UInt8]("update".utf8)
+
     /// Description
     /// - Parameters:
     ///   - masterKey: master key
@@ -135,9 +141,8 @@ class AccessoryKeyGenerator: Collection {
             curSKIndex = 0
         }
         for _ in curSKIndex..<idx {
-            let sharedInfo = "update".utf8
 
-            curSK = KDF.X963KDF(.SHA2_256, curSK, 32, [UInt8](sharedInfo))
+            curSK = KDF.X963KDF(.SHA2_256, curSK, 32, sharedInfo)
             curSKIndex += 1
         }
 

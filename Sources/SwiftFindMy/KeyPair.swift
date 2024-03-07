@@ -16,6 +16,7 @@ import BigInt
 /// Protocol for anything that has a public FindMy-key.
 /// Also called an "advertisement" key, since it is the key that is advertised by findable devices.
 public protocol HasPublicKey : Hashable {
+
     /// The advertisement key bytes
     var advKeyBytes : [UInt8] { get }
 
@@ -44,7 +45,7 @@ public extension HasPublicKey {
     }
 
      func hash(into hasher: inout Hasher) {
-        hasher.combine(hashedAdvKeyBytes)
+        hasher.combine(advKeyBytes)
     }
 
     static func == (lhs: any HasPublicKey, rhs: any HasPublicKey) -> Bool {
@@ -67,6 +68,18 @@ public struct KeyPair : HasPublicKey, CustomStringConvertible {
     let privKey: ECPrivateKey?
 
     public
+    let privateKeyBytes : [UInt8]
+
+    public
+    let advKeyBytes : [UInt8]
+
+    public
+    let hashedAdvKeyBytes : [UInt8]
+
+    static
+    let domain = Domain.instance(curve: .EC224r1)
+
+    public
     let keyType : KeyType
 
     /// Description
@@ -75,10 +88,15 @@ public struct KeyPair : HasPublicKey, CustomStringConvertible {
     ///   - type: key type (Primary, Secondary)
     public
     init(privateKey : [UInt8], type: KeyType = .Unknown) {
-        let domain = Domain.instance(curve: .EC224r1)
         let privInt = BInt(magnitude: privateKey)
         
-        privKey = try? ECPrivateKey(domain: domain, s: privInt)
+        privKey = try? ECPrivateKey(domain: KeyPair.domain, s: privInt)
+        let publicKey = (privKey != nil) ? ECPublicKey(privateKey: privKey!) : nil
+
+        privateKeyBytes = privateKey
+        advKeyBytes = publicKey?.w.x.asMagnitudeBytes() ?? []
+        hashedAdvKeyBytes = SHA256.hash(data: Data(advKeyBytes)).bytes
+
         keyType = type
     }
     
@@ -95,21 +113,6 @@ public struct KeyPair : HasPublicKey, CustomStringConvertible {
     public
     var isValid : Bool {
         return privKey != nil
-    }
-
-    public
-    var advKeyBytes: [UInt8] {
-        guard let privKey = privKey else { return [] }
-
-        let publicKey = ECPublicKey(privateKey: privKey)
-        return publicKey.w.x.asMagnitudeBytes()
-    }
-
-    public
-    var privateKeyBytes: [UInt8] {
-        guard let privKey = privKey else { return [] }
-
-        return privKey.s.asMagnitudeBytes()
     }
 
     public
