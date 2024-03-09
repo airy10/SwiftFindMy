@@ -18,6 +18,12 @@ import CommonCrypto
 public
 struct Crypto {
 
+    enum FindMyDecryptError: Error {
+        case invalidFileFormat
+        case invalidPListFormat
+        case invalidDecryptedData
+    }
+
     static private let P224_N = BInt("ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d", radix: 16)!
     static private let sharedInfo = [UInt8]("diversify".utf8)
 
@@ -123,4 +129,53 @@ struct Crypto {
     }
 
 
+    /// Function to decrypt beacon data from a FindMy file
+    /// See https://gist.github.com/airy10/5205dc851fbd0715fcd7a5cdde25e7c8
+    /// - Parameters:
+    ///   - data: content of the beacon file
+    ///   - key: BeaconStore key
+    /// - Returns: Dictionary from the deconded data
+    static
+    func decryptFindMyRecordData(data: Data, key: SymmetricKey) throws -> [String: Any] {
+
+        // Convert data to a property list (plist)
+        guard let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [Any] else {
+            throw FindMyDecryptError.invalidFileFormat
+        }
+
+        // Extract nonce, tag, and ciphertext
+        guard plist.count >= 3,
+              let nonceData = plist[0] as? Data,
+              let tagData = plist[1] as? Data,
+              let ciphertextData = plist[2] as? Data else {
+            throw FindMyDecryptError.invalidPListFormat
+        }
+
+        let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonceData), ciphertext: ciphertextData, tag: tagData)
+
+        // Decrypt using AES-GCM
+        let decryptedData = try AES.GCM.open(sealedBox, using: key)
+
+        // Convert decrypted data to a property list
+        guard let decryptedPlist = try PropertyListSerialization.propertyList(from: decryptedData, options: [], format: nil) as? [String: Any] else {
+            throw FindMyDecryptError.invalidDecryptedData
+        }
+
+        return decryptedPlist
+
+    }
+
+    /// Function to decrypt beacon data from a FindMy file
+    /// See https://gist.github.com/airy10/5205dc851fbd0715fcd7a5cdde25e7c8
+    /// - Parameters:
+    ///   - fileURL: URL for the beacon file
+    ///   - key: BeaconStore key
+    /// - Returns: Dictionary from the deconded file
+    static
+    func decryptFindMyRecordFile(fileURL: URL, key: SymmetricKey) throws -> [String: Any] {
+        // Read data from the file
+        let data = try Data(contentsOf: fileURL)
+
+        return try decryptFindMyRecordData(data: data, key: key)
+    }
 }
