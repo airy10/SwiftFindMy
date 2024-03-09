@@ -28,9 +28,7 @@ extension FindMyAccessory {
 
     public func fetchReports(account: BaseAppleAccount, dateFrom: Date, dateTo: Date? = nil) async throws -> [LocationReport] {
 
-        print("Generating keys ----------------------", Date.now, ":")
         let keys = keys(dateFrom: dateFrom, dateTo: dateTo)
-        print("Done            ----------------------", Date.now, ":")
 
         let reports = try  await account.fetchReports(
             keys: keys,

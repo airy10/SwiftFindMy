@@ -40,6 +40,7 @@ protocol AsyncSecondFactorMethod : BaseSecondFactorMethod<AsyncAppleAccount>
 }
 
 /// Base class for SMS-based two-factor authentication.
+public
 protocol SmsSecondFactorMethod : BaseSecondFactorMethod {
 
     /// The phone number's ID. You most likely don't need this.

@@ -109,7 +109,7 @@ protocol BaseAppleAccount {
     /// Retrieve a complete dictionary of Anisette headers.
     ///
     /// Utility method for `AnisetteProvider.get_headers` using this account"s user and device ID.
-    func anisetteHeaders(serial: String) async throws -> [String: String]
+    func anisetteHeaders(withClientInfo: Bool, serial: String) async throws -> [String: String]
 }
 
 struct AccountInfo : Codable {
@@ -165,7 +165,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
     private lazy var reports : LocationReportsFetcher? = LocationReportsFetcher(account: self)
 
     private var accountInfo : AccountInfo?
-    private var loginStateData : Dictionary<String, Any>
+    private var loginStateData : [String : Any]
 
     private var http : URLSession
 
@@ -317,8 +317,8 @@ public class AsyncAppleAccount : BaseAppleAccount {
     }
 
     /// See `BaseAppleAccount.get_anisette_headers`
-    public func anisetteHeaders(serial: String = "0") async throws -> [String : String] {
-        return try await anisette.headers(userID: self.uid, deviceID: self.devId, serial: serial)
+    public func anisetteHeaders(withClientInfo: Bool = false, serial: String = "0") async throws -> [String : String] {
+        return try await anisette.headers(userID: self.uid, deviceID: self.devId, serial: serial, withClientInfo: withClientInfo)
     }
 
 
@@ -451,13 +451,14 @@ public class AsyncAppleAccount : BaseAppleAccount {
         let dict : [String : Any] = [
             "apple-id": userName ?? "",
             "delegates": [
-                "com.apple.mobileme": [String]()
+                "com.apple.mobileme": []
             ],
             "password":  loginStateData["idms_pet"] as? String ?? "",
-            "client-id": uid
+            "client-id": uid,
         ]
 
         let xmldata = try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
+        try? xmldata.write(to: URL(filePath: "/tmp/xml.xml"))
 
         var headers : [String : String] = [
             "X-Apple-ADSID": loginStateData["adsid"] as? String ?? "0",
@@ -474,9 +475,10 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         let user = userName ?? ""
         let pass = loginStateData["idms_pet"] ?? ""
-        let auth = [UInt8]("\(user):\(pass)".utf8)
-        let base64LoginString = Base64.encode(auth, 10000)
-        request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+        let authStr = [UInt8]("\(user):\(pass)".utf8)
+        let base64LoginString = Base64.encode(authStr, 10000)
+        let authHeader = "Basic \(base64LoginString)"
+        request.addValue(authHeader, forHTTPHeaderField: "Authorization")
 
         let (responseData, response) = try await http.upload(
             for: request,
@@ -521,33 +523,23 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
     func gsaRequest(params: [String : Any]) async throws -> [String : Any] {
 
-        var requestData : [String:Any] = [:]
+        var requestDict : [String: Any] = [
+            "cpd" : try await anisette.cpd(userID: uid, deviceID: devId)
+        ]
+        requestDict.merge(params) { $1 }
 
-        let anisetteHeaders = try await anisetteHeaders()
-
-        var cpd = [
-            "bootstrap": true,
-            "icscrec": true,
-            "pbe": false,
-            "prkgen": true,
-            "svct": "iCloud",
-        ] as [String : Any]
-
-        cpd.merge(anisetteHeaders) { $1 }
-        requestData["cpd"] = cpd
-
-        requestData.merge(params) { $1 }
-
-        let body = [
-            "Header": ["Version": "1.0.1"],
-            "Request": requestData
+        let body : [String: Any] = [
+            "Header": [
+                "Version": "1.0.1"
+            ],
+            "Request": requestDict
         ]
 
         let headers = [
             "Content-Type": "text/x-xml-plist",
             "Accept": "*/*",
             "User-Agent": "akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0",
-            "X-MMe-Client-Info": "<MacBookPro18,3> <Mac OS X;13.4.1;22F8> <com.apple.AOSKit/282 (com.apple.dt.Xcode/3594.4.19)>"
+            "X-MMe-Client-Info": anisette.client
         ]
 
         let url = URL(string: EndpointGSA)!
@@ -556,7 +548,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
         request.httpMethod = "POST"
 
         let xmldata = try PropertyListSerialization.data(fromPropertyList: body, format: .xml, options: 0)
-
+        try? xmldata.write(to: URL(filePath: "/tmp/xml.xml"))
 
         let (responseData, response) = try await http.upload(
             for: request,
@@ -570,9 +562,17 @@ public class AsyncAppleAccount : BaseAppleAccount {
             }
         }
 
-        let data : [ String : Any ] = try PropertyListSerialization.propertyList(from: responseData, options: [], format: nil) as! [String : Any]
+        do {
+            let data : [ String : Any ] = try PropertyListSerialization.propertyList(from: responseData, options: [], format: nil) as! [String : Any]
 
-        return data["Response"] as? [String:Any] ?? [:]
+            return data["Response"] as? [String:Any] ?? [:]
+
+        }
+        catch _ {
+            let msg = "GSA Request failed"
+            throw FindMyAccountError.unhandledProtocolError(message: msg)
+        }
+
     }
 
     public func get2FaMethods() async throws -> [any BaseSecondFactorMethod] {
@@ -725,12 +725,10 @@ public class AsyncAppleAccount : BaseAppleAccount {
                 "User-Agent": "Xcode",
                 "Accept-Language": "en-us",
                 "X-Apple-Identity-Token": identityToken,
-                "X-Apple-App-Info": "com.apple.gs.xcode.auth",
-                "X-Xcode-Version": "11.2 (11B41)",
-                "X-Mme-Client-Info": "<MacBookPro18,3> <Mac OS X;13.4.1;22F8> <com.apple.AOSKit/282 (com.apple.dt.Xcode/3594.4.19)>",
             ]
         ) { $1 }
-        headers.merge(try await self.anisetteHeaders()) { $1 }
+
+        headers.merge(try await self.anisetteHeaders(withClientInfo: true)) { $1 }
 
         let url = URL(string: url)!
         var request = URLRequest(url: url)

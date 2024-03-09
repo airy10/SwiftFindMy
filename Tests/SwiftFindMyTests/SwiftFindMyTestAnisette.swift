@@ -18,10 +18,10 @@ final class SwiftFindMyTestAnisette: XCTestCase {
 
         let anisette = RemoteAnisetteProvider(server: "http://192.168.1.252:6969")
 
-        let headers = try await anisette.baseHeaders()
+        let headers = try await anisette.headers(userID: "someid", deviceID: "somedevid")
         print(headers)
 
-        XCTAssertEqual(headers.count, 2)
+        XCTAssertEqual(headers.count, 10)
 
     }
 }

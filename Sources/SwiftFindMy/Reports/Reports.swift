@@ -109,18 +109,6 @@ public struct LocationReport : Comparable, Hashable {
     }
 }
 
-struct  FetcherConfig : Codable {
-    let userID: String
-    let deviceID: String
-    let dsID: String
-    let searchPartyToken: String
-
-    enum CodingKeys: String, CodingKey {
-        // So we have the same encoding as the Python version
-        case userID = "user_id",  deviceID = "device_id",  dsID = "dsid",  searchPartyToken = "search_party_token"
-    }
-}
-
 public struct LocationReportsFetcher {
     let account : BaseAppleAccount
 
