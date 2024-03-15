@@ -50,6 +50,10 @@ protocol BaseAppleAccount {
 
 
     /// Log in to an Apple account using a username and password.
+    /// - Parameters:
+    ///   - username: Apple ID user
+    ///   - password: Apple ID password
+    /// - Returns: the result LoginState  - can be Require2FA if additional step is needed
     func login(username: String, password: String) async throws -> LoginState
 
 
@@ -65,28 +69,7 @@ protocol BaseAppleAccount {
     /// Consider using `BaseSecondFactorMethod.submit` instead.
     func sms2FaSubmit(phoneNumberID: Int, code: String) async throws -> LoginState
 
-    /**
-    @abstractmethod
-    func td_2fa_request(self) -> MaybeCoro[nil]:
-        /// 
-        Request a 2FA code to be sent to a trusted device.
-
-        Consider using `BaseSecondFactorMethod.request` instead.
-        /// 
-    throw FindMyAccountError.NotImplementedError
-
-    @abstractmethod
-    func td_2fa_submit(self, code: String) -> MaybeCoro[LoginState]:
-        /// 
-        Submit a 2FA code that was sent to a trusted device.
-
-        Consider using `BaseSecondFactorMethod.submit` instead.
-        /// 
-    throw FindMyAccountError.NotImplementedError
-
-     */
-
-
+    /// Make a request for location reports, returning raw data.
     func fetchRawReports(start: Int, end: Int, ids: [String]) async throws -> [String : Any]
 
     /// Fetch location reports for a sequence of `KeyPair`s between `date_from` and `date_end`.
@@ -126,6 +109,13 @@ struct AccountInfo : Codable {
 
 /// An async implementation of `BaseAppleAccount`
 public class AsyncAppleAccount : BaseAppleAccount {
+
+    public func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        //Trust the certificate even if not valid
+        let urlCredential = URLCredential(trust: challenge.protectionSpace.serverTrust!)
+
+        completionHandler(.useCredential, urlCredential)
+    }
 
     // auth endpoints
     let EndpointGSA = "https://gsa.apple.com/grandslam/GsService2"
@@ -190,7 +180,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         self.http = URLSession(configuration: .default)
     }
-
+            
     public func export() -> [String : Any] {
         var account : [String: Any] = [:]
         if let username = self.userName {
@@ -257,7 +247,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
     /// Make a request for location reports, returning raw data.
     public
-    func fetchRawReports(start: Int, end: Int, ids: [String]) async throws -> [String : Any] {
+    func    fetchRawReports(start: Int, end: Int, ids: [String]) async throws -> [String : Any] {
         let auth = [
             loginStateData["dsid"],
             ((loginStateData["mobileme_data"] as! [String: Any])["tokens"] as!  [String: Any])["searchPartyToken"],
@@ -279,20 +269,26 @@ public class AsyncAppleAccount : BaseAppleAccount {
         request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let (responseData, response) = try await http.upload(
-            for: request,
-            from: json
-        )
+        do {
+            let (responseData, response) = try await http.upload(
+                for: request,
+                from: json
+            )
 
-        if let httpResponse = response as? HTTPURLResponse {
-            if httpResponse.statusCode != 200  {
-                let msg = "Failed to fetch reports: \(httpResponse.statusCode)"
-                throw FindMyAccountError.unhandledProtocolError(message: msg)
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode != 200  {
+                    let msg = "Failed to fetch reports: \(httpResponse.statusCode)"
+                    throw FindMyAccountError.unhandledProtocolError(message: msg)
+                }
             }
-        }
 
-        let resp = try JSONSerialization.jsonObject(with: responseData, options: []) as! [String: Any]
-        return resp
+            let resp = try JSONSerialization.jsonObject(with: responseData, options: []) as! [String: Any]
+            return resp
+        }
+        catch  {
+            let msg = "Failed to fetch reports - unexpected network error)"
+            throw FindMyAccountError.unhandledProtocolError(message: msg)
+        }
     }
 
     public func fetchReports(keys: any Sequence<KeyPair>, dateFrom: Date, dateTo: Date?) async throws -> [KeyPair : [LocationReport]] {
@@ -448,20 +444,21 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
     private func loginMobileMe() async throws -> LoginState {
 
+        guard let userName = userName else { return .LoggedOut }
+        guard let idmsPet = loginStateData["idms_pet"] as? String else { return .LoggedOut }
+        guard let adsid = loginStateData["adsid"] as? String else { return .LoggedOut }
+
         let dict : [String : Any] = [
-            "apple-id": userName ?? "",
-            "delegates": [
-                "com.apple.mobileme": []
-            ],
-            "password":  loginStateData["idms_pet"] as? String ?? "",
+            "apple-id": userName,
+            "delegates": [ "com.apple.mobileme": [:] ],
+            "password":  idmsPet,
             "client-id": uid,
         ]
 
-        let xmldata = try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
-        try? xmldata.write(to: URL(filePath: "/tmp/xml.xml"))
+        let plistData = try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
 
         var headers : [String : String] = [
-            "X-Apple-ADSID": loginStateData["adsid"] as? String ?? "0",
+            "X-Apple-ADSID": adsid,
             "User-Agent": "com.apple.iCloudHelper/282 CFNetwork/1408.0.4 Darwin/22.5.0",
             "X-Mme-Client-Info": "<MacBookPro18,3> <Mac OS X;13.4.1;22F8> <com.apple.AOSKit/282 (com.apple.accountsd/113)>"
         ]
@@ -473,16 +470,17 @@ public class AsyncAppleAccount : BaseAppleAccount {
         request.allHTTPHeaderFields = headers
         request.httpMethod = "POST"
 
-        let user = userName ?? ""
-        let pass = loginStateData["idms_pet"] ?? ""
+        let user = userName
+        let pass = idmsPet
         let authStr = [UInt8]("\(user):\(pass)".utf8)
         let base64LoginString = Base64.encode(authStr, 10000)
         let authHeader = "Basic \(base64LoginString)"
-        request.addValue(authHeader, forHTTPHeaderField: "Authorization")
+        request.setValue(authHeader, forHTTPHeaderField: "Authorization")
+
 
         let (responseData, response) = try await http.upload(
             for: request,
-            from: xmldata
+            from: plistData
         )
 
         if let httpResponse = response as? HTTPURLResponse {
@@ -499,8 +497,8 @@ public class AsyncAppleAccount : BaseAppleAccount {
 
         let data : [ String : Any ] = try PropertyListSerialization.propertyList(from: responseData, options: [], format: nil) as! [String : Any]
 
-        if let delegatesResult =  data["delegates"] as? [String: Encodable] {
-            let mobilemeData = delegatesResult["com.apple.mobileme"] as! [String : Encodable]
+        if let delegatesResult =  data["delegates"] as? [String: Any] {
+            let mobilemeData = delegatesResult["com.apple.mobileme"] as! [String : Any]
             let status = mobilemeData["status"] as! Int
             if status != 0 {
                 let statusMessage = mobilemeData["status-message"] ?? ""
@@ -521,7 +519,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
         }
     }
 
-    func gsaRequest(params: [String : Any]) async throws -> [String : Any] {
+    private func gsaRequest(params: [String : Any]) async throws -> [String : Any] {
 
         var requestDict : [String: Any] = [
             "cpd" : try await anisette.cpd(userID: uid, deviceID: devId)
@@ -643,6 +641,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
     }
 
     /// See `BaseAppleAccount.td_2fa_request`."""
+    internal
     func trustedDevice2FaRequest() async throws {
         let headers = [
             "Content-Type": "text/x-xml-plist",
@@ -656,6 +655,7 @@ public class AsyncAppleAccount : BaseAppleAccount {
     }
 
     /// See `BaseAppleAccount.trustedDevice2FaSubmit
+    internal
     func trustedDevice2FaSubmit(code: String) async throws -> LoginState {
 
         let headers = [

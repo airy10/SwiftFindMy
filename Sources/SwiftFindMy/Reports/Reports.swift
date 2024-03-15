@@ -61,7 +61,7 @@ public struct LocationReport : Comparable, Hashable {
 
     /// Description of the location report as published by Apple
     public
-    let description: String
+    let reportDescription: String
 
     /// Latitude of the location of this report
     public
@@ -105,7 +105,7 @@ public struct LocationReport : Comparable, Hashable {
         let confidence = Int(decoded[8])
         let status = Int(decoded[9])
 
-        return Self.init(key: key, publishedAt: publishDate, timestamp: timestamp, description: description, latitude: latitude, longitude: longitude, confidence: confidence, status: status)
+        return Self.init(key: key, publishedAt: publishDate, timestamp: timestamp, reportDescription: description, latitude: latitude, longitude: longitude, confidence: confidence, status: status)
     }
 }
 
@@ -118,8 +118,13 @@ public struct LocationReportsFetcher {
     }
 
 
-    /// Fetch location reports for a certain keyPari.
+    /// Fetch location reports for a certain keyPair
     /// Reports are sorted by timestamp
+    /// - Parameters:
+    ///   - dateFrom: start date for wanted reports
+    ///   - dateTo: end date for wanted reports
+    ///   - device: the device keyPair - which should be valid for the date interval
+    /// - Returns: list of found reports
     public func fetchReports(dateFrom: Date, dateTo: Date, device: KeyPair) async throws -> [LocationReport] {
 
         return try await baseFetchReports(dateFrom: dateFrom, dateTo: dateTo, devices: [device])

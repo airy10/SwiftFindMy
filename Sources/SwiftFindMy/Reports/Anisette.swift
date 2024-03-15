@@ -140,7 +140,6 @@ extension BaseAnisetteProvider {
         withClientInfo: Bool = false) async throws ->  [String: String] 
     {
         print("!!!! default implementation")
-        fatalError("default implementation")
 
         return try await baseHeaders(userID: userID, deviceID: deviceID, serial: serial, withClientInfo: withClientInfo)
     }
